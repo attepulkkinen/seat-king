@@ -1,5 +1,5 @@
 const {Actions, Button, Divider, Header, HomeTab, Section, Image, Context, Md} = require('slack-block-builder');
-const {getIcon} = require("../helpers");
+const {getIcon, log} = require("../helpers");
 const {DateTime} = require("luxon");
 const knex = require('../db.js');
 const _ = require("lodash");
@@ -35,11 +35,13 @@ function makeNextWeekDays() {
 }
 
 
-async function makeViewArray(user_id) {
+async function makeViewArray(user_id, server_id) {
   const nextWeekDays = makeNextWeekDays();
   const userTeams = await knex('teams')
     .join('memberships', 'teams.id', 'memberships.team_id')
+    .join('users', 'memberships.user_id', 'users.id')
     .where('memberships.user_id', user_id)
+    .where('users.server_id', server_id)
     .select();
 
   const teamsMembers = await knex('memberships')
@@ -51,6 +53,11 @@ async function makeViewArray(user_id) {
     .whereBetween('date', [nextWeekDays[0], nextWeekDays[nextWeekDays.length - 1]])
     .select();
 
+  const ownStatuses = await knex('deskings')
+    .where('user_id', user_id)
+    .whereBetween('date', [nextWeekDays[0], nextWeekDays[nextWeekDays.length - 1]])
+    .select();
+
   let view = {};
 
   const teamsMembersByTeam = _.groupBy(
@@ -59,15 +66,19 @@ async function makeViewArray(user_id) {
   );
 
   for (const day of nextWeekDays) {
-    view[day] = {};
+    let status = ownStatuses.filter((seating) => seating.user_id === user_id && seating.date === day);
+    view[day] = {
+      teams: {},
+      ownStatus: status.length > 0 ? status[0].status : null,
+    };
     for (const team in teamsMembersByTeam) {
       if (!teamsMembersByTeam.hasOwnProperty(team)) continue;
-      view[day][team] = {};
+      view[day].teams[team] = {};
       for (const member of teamsMembersByTeam[team]) {
         let status = nextWeekStatuses.filter(status => {
           return status.user_id == member.user_id && status.date == day;
         });
-        view[day][team][member.user_id] = status.length > 0 ? status[0].status : null;
+        view[day].teams[team][member.user_id] = status.length > 0 ? status[0].status : null;
       }
     }
   }
@@ -75,7 +86,7 @@ async function makeViewArray(user_id) {
   return view;
 }
 
-module.exports = async (user_id, team_id) => {
+module.exports = async (user_id, server_id) => {
   let tab = HomeTab()
     .blocks(
       Actions()
@@ -88,16 +99,16 @@ module.exports = async (user_id, team_id) => {
     )
 
 
-  const view = await makeViewArray(user_id);
+  const view = await makeViewArray(user_id, server_id);
 
   for (const day in view) {
-    const teams = view[day];
-    const status = teams[Object.keys(teams)[0]][user_id];
+    const teams = view[day].teams;
+    const ownStatus = view[day].ownStatus;
 
-    tab = tab.blocks(
+      tab = tab.blocks(
       Divider(),
       Section().text(`*${day}*`),
-      Section().text(`Current status:  ${getIcon(status)}`),
+      Section().text(`Current status:  ${getIcon(ownStatus)}`),
       Context().elements(
         Image()
           .imageUrl('https://api.slack.com/img/blocks/bkb_template_images/placeholder.png')
@@ -130,17 +141,17 @@ module.exports = async (user_id, team_id) => {
             .text(getIcon('remote'))
             .actionId('set_remote')
             .value(day)
-            .primary(status === 'remote'),
+            .primary(ownStatus === 'remote'),
           Button()
             .text(getIcon('office'))
             .actionId('set_office')
             .value(day)
-            .primary(status === 'office'),
+            .primary(ownStatus === 'office'),
           Button()
             .text(getIcon('ooo'))
             .actionId('set_ooo')
             .value(day)
-            .primary(status === 'ooo'),
+            .primary(ownStatus === 'ooo'),
         ),
     )
   }
