@@ -18,7 +18,7 @@
   },
   "homepage": "https://github.com/Kehet/seat-king#readme",
   "dependencies": {
-    "@slack/bolt": "^3.10.0",
+    "@slack/bolt": "^3.16.0",
     "@vscode/sqlite3": "^5.0.7",
     "dotenv": "^16.0.0",
     "knex": "^2.4.0",
